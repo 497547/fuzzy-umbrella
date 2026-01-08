@@ -1,0 +1,86 @@
+name: SSH Runner + Ngrok (Password)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ssh-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300   # 5 hours
+
+    env:
+      NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      SSH_PASSWORD: runner123@ssh   # 🔴 CHANGE IF YOU WANT
+
+    steps:
+      - uses: actions/checkout@v3
+
+      # --------------------
+      # Install SSH
+      # --------------------
+      - name: Install OpenSSH
+        run: |
+          sudo apt update
+          sudo apt install -y openssh-server jq
+
+      # --------------------
+      # Configure SSH with Password
+      # --------------------
+      - name: Configure SSH Password Login
+        run: |
+          sudo systemctl start ssh
+          sudo systemctl enable ssh
+
+          echo "runner:${SSH_PASSWORD}" | sudo chpasswd
+          echo "runner ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/runner
+
+          sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+
+          sudo systemctl restart ssh
+
+          echo
+          echo "===== SSH LOGIN DETAILS ====="
+          echo "Username : runner"
+          echo "Password : ${SSH_PASSWORD}"
+          echo "============================="
+          echo
+
+      # --------------------
+      # Install Ngrok
+      # --------------------
+      - name: Install Ngrok
+        run: |
+          curl -fsSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+            | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt update
+          sudo apt install -y ngrok
+
+      - name: Authenticate Ngrok
+        run: |
+          ngrok config add-authtoken $NGROK_AUTH_TOKEN
+
+      # --------------------
+      # Start Ngrok SSH Tunnel
+      # --------------------
+      - name: Start Ngrok SSH Tunnel
+        run: |
+          ngrok tcp 22 --log=stdout &
+          sleep 10
+
+          echo
+          echo "===== NGROK SSH ADDRESS ====="
+          curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url'
+          echo "============================="
+          echo
+
+      # --------------------
+      # Keep Alive
+      # --------------------
+      - name: Keep Alive
+        run: sleep 18000
